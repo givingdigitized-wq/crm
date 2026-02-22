@@ -3,9 +3,9 @@
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { ensureNoActiveLease } from "@/lib/lease-rules";
 import { requireLandlordSession, signIn, signOut } from "@/lib/auth";
 
 export async function signupAction(formData: FormData) {
@@ -167,22 +167,30 @@ export async function createLeaseAction(formData: FormData) {
 
   if (!unit || !contact) throw new Error("Invalid unit/contact selection");
 
-  if (data.status === "active") {
-    await ensureNoActiveLease(prisma, user.landlordId, data.unitId);
-  }
+  try {
+    await prisma.lease.create({
+      data: {
+        landlordId: user.landlordId,
+        unitId: data.unitId,
+        contactId: data.contactId,
+        startDate: new Date(data.startDate),
+        endDate: new Date(data.endDate),
+        rent: data.rent,
+        deposit: data.deposit,
+        status: data.status,
+      },
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002" &&
+      data.status === "active"
+    ) {
+      throw new Error("This unit already has an active lease.");
+    }
 
-  await prisma.lease.create({
-    data: {
-      landlordId: user.landlordId,
-      unitId: data.unitId,
-      contactId: data.contactId,
-      startDate: new Date(data.startDate),
-      endDate: new Date(data.endDate),
-      rent: data.rent,
-      deposit: data.deposit,
-      status: data.status,
-    },
-  });
+    throw error;
+  }
 
   revalidatePath("/leases");
 }
